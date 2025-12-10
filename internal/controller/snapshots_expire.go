@@ -20,7 +20,10 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -28,7 +31,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	snapschedulerv1 "github.com/backube/snapscheduler/api/v1"
+	snapschedulerv1 "deeproute.ai/snapscheduler/api/v1"
+	"deeproute.ai/snapscheduler/internal/hooks"
+	"deeproute.ai/snapscheduler/utils/exec"
 )
 
 // expireByCount deletes the oldest snapshots until the number of snapshots for
@@ -49,11 +54,15 @@ func expireByCount(ctx context.Context, schedule *snapschedulerv1.SnapshotSchedu
 	}
 
 	grouped := groupSnapsByPVC(snapList)
-	for _, list := range grouped {
-		list = sortSnapsByTime(list)
-		if len(list) > int(*schedule.Spec.Retention.MaxCount) {
-			list = list[:len(list)-int(*schedule.Spec.Retention.MaxCount)]
-			err := deleteSnapshots(ctx, list, logger, c)
+	for _, backupSnapMp := range grouped {
+		backupList := sortSnapsByTime(backupSnapMp)
+		if len(backupList) > int(*schedule.Spec.Retention.MaxCount) {
+			backupList = backupList[:len(backupList)-int(*schedule.Spec.Retention.MaxCount)]
+			list := []snapv1.VolumeSnapshot{}
+			for _, l := range backupList {
+				list = append(list, l...)
+			}
+			err := deleteSnapshots(ctx, list, logger, c, schedule)
 			if err != nil {
 				return err
 			}
@@ -88,19 +97,76 @@ func expireByTime(ctx context.Context, schedule *snapschedulerv1.SnapshotSchedul
 
 	logger.Info("deleting expired snapshots", "expiration", expiration.Format(time.RFC3339),
 		"total", len(snapList), "expired", len(expiredSnaps))
-	err = deleteSnapshots(ctx, expiredSnaps, logger, c)
+	err = deleteSnapshots(ctx, expiredSnaps, logger, c, schedule)
 	return err
 }
 
 func deleteSnapshots(ctx context.Context, snapshots []snapv1.VolumeSnapshot,
-	logger logr.Logger, c client.Client) error {
+	logger logr.Logger, c client.Client, schedule *snapschedulerv1.SnapshotSchedule) error {
+	backupSnapshotsMap := make(map[string][]snapv1.VolumeSnapshot)
+	backupSnapCountMap := make(map[string]int)
 	for i := range snapshots {
 		snap := snapshots[i]
-		if err := c.Delete(ctx, &snap, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil {
-			logger.Error(err, "error deleting snapshot", "name", snap.Name)
-			return err
+		backupName, ok := snap.Labels[hooks.BackupNameLabelKey]
+		if !ok {
+			logger.Info("skip deleting snapshot without backup name label", "snapshotName", snap.Name)
+			continue
+		}
+		// format back to original backup name
+		backupName = strings.ReplaceAll(backupName, "_", ":")
+
+		backupSnapshotsMap[backupName] = append(backupSnapshotsMap[backupName], snap)
+		if _, ok := backupSnapCountMap[backupName]; !ok {
+			if backupVolCounts, ok := snap.Labels[hooks.BackupVolumeCountLabelKey]; ok {
+				count, err := strconv.Atoi(backupVolCounts)
+				if err != nil {
+					logger.Error(err, "error parsing backup volume count label", "labelValue", backupVolCounts)
+					count = 0
+				}
+				backupSnapCountMap[backupName] = count
+			}
 		}
 	}
+	for backup, snaps := range backupSnapshotsMap {
+		if len(snaps) != backupSnapCountMap[backup] {
+			logger.Info("skip deleting snapshots for incomplete backup", "backupName", backup, "snapshotCount", len(snaps), "expectedVolumeCount", backupSnapCountMap[backup])
+			continue
+		}
+		for _, snap := range snaps {
+			logger.Info("deleted snapshot", "backupName", backup, "snapshotName", snap.Name)
+			if err := c.Delete(ctx, &snap, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil {
+				if client.IgnoreNotFound(err) == nil {
+					logger.Info("snapshot already deleted", "snapshotName", snap.Name)
+					continue
+				}
+				logger.Error(err, "error deleting snapshot", "name", snap.Name)
+				return err
+			}
+		}
+
+		// run OnExpire hook
+		if schedule == nil {
+			continue
+		}
+		hook := hooks.GlobalHooksRegistry.GetHook(schedule.Spec.SnapshotTemplate.Service.Type)
+		if hook == nil {
+			return fmt.Errorf("no hook registered for service type %s", schedule.Spec.SnapshotTemplate.Service.Type)
+		}
+		scCtx := hooks.SnapshotContext{
+			Context:           ctx,
+			Schedule:          schedule,
+			Executor:          &exec.CommandExecutor{},
+			Logger:            logger,
+			DeleteBackupNames: []string{backup},
+		}
+		err := hook.OnExpire(&scCtx)
+		if err != nil {
+			logger.Error(err, "failed to run OnExpire hook for backup", "backupName", backup)
+			return err
+		}
+		logger.Info("deleted snapshot", "backupName", backup, "count", len(snaps))
+	}
+	logger.Info("completed deletion of expired snapshots")
 	return nil
 }
 
@@ -175,26 +241,45 @@ func snapshotsFromSchedule(ctx context.Context, schedule *snapschedulerv1.Snapsh
 
 // groupSnapsByPVC takes a list of snapshots and groups them by the PVC they
 // were created from
-func groupSnapsByPVC(snaps []snapv1.VolumeSnapshot) map[string][]snapv1.VolumeSnapshot {
-	groupedSnaps := make(map[string][]snapv1.VolumeSnapshot)
+func groupSnapsByPVC(snaps []snapv1.VolumeSnapshot) map[string]map[string][]snapv1.VolumeSnapshot {
+	// service instance -> backupName -> []snapshots
+	groupedSnaps := make(map[string]map[string][]snapv1.VolumeSnapshot)
 	for _, snap := range snaps {
-		pvcName := snap.Spec.Source.PersistentVolumeClaimName
-		if pvcName != nil {
-			if groupedSnaps[*pvcName] == nil {
-				groupedSnaps[*pvcName] = []snapv1.VolumeSnapshot{}
-			}
-			groupedSnaps[*pvcName] = append(groupedSnaps[*pvcName], snap)
+		if snap.Spec.Source.PersistentVolumeClaimName == nil {
+			continue
 		}
+
+		backupName, backupOK := snap.Labels[hooks.BackupNameLabelKey]
+		serviceName, instanceOK := snap.Labels[hooks.ServiceLabelKey]
+		if backupOK && instanceOK {
+			backupName = strings.ReplaceAll(backupName, "_", ":")
+		} else {
+			// raw volumes
+			continue
+		}
+
+		if groupedSnaps[serviceName] == nil {
+			groupedSnaps[serviceName] = make(map[string][]snapv1.VolumeSnapshot)
+		}
+		if groupedSnaps[serviceName][backupName] == nil {
+			groupedSnaps[serviceName][backupName] = []snapv1.VolumeSnapshot{}
+		}
+		groupedSnaps[serviceName][backupName] = append(groupedSnaps[serviceName][backupName], snap)
 	}
 
 	return groupedSnaps
 }
 
 // sortSnapsByTime sorts the snapshots in order of ascending CreationTimestamp
-func sortSnapsByTime(snaps []snapv1.VolumeSnapshot) []snapv1.VolumeSnapshot {
-	sorted := append([]snapv1.VolumeSnapshot(nil), snaps...)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].CreationTimestamp.Before(&sorted[j].CreationTimestamp)
+func sortSnapsByTime(snaps map[string][]snapv1.VolumeSnapshot) [][]snapv1.VolumeSnapshot {
+	var snapGroups [][]snapv1.VolumeSnapshot
+	for _, snapList := range snaps {
+		if len(snapList) > 0 {
+			snapGroups = append(snapGroups, snapList)
+		}
+	}
+	sort.Slice(snapGroups, func(i, j int) bool {
+		return snapGroups[i][0].CreationTimestamp.Before(&snapGroups[j][0].CreationTimestamp)
 	})
-	return sorted
+	return snapGroups
 }

@@ -38,6 +38,36 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// ServiceType defines the type of service to check before snapshot
+type ServiceType string
+
+const (
+	// ServiceMongodb for mognodb services
+	ServiceMongodb ServiceType = "percona-server-mongodb"
+)
+
+// ServiceSpec defines the pre-snapshot service verification
+type ServiceSpec struct {
+	// The type of service to check (percona-server-mongodb)
+	//+kubebuilder:validation:Enum=percona-server-mongodb
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Service type",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:select:percona-server-mongodb"}
+	//+optional
+	Type ServiceType `json:"type,omitempty"`
+	// The service endpoint URI or address to check. Example: "mongodb://user:pass@host:port",  ${PBM_MONGODB_URI} in backup-agent container
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Service address",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+optional
+	URI string `json:"uri,omitempty"`
+	// Timeout for the service check (e.g., "5s", "10s"). Reserved fields for future use.
+	//+kubebuilder:validation:Pattern=^\d+(s|m)$
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Check timeout",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+optional
+	Timeout string `json:"timeout,omitempty"`
+	// The instance name of service to check. Example: "dev-rs-mdb"
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="service instance",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+optional
+	Instance string `json:"instance,omitempty"`
+}
+
 // SnapshotRetentionSpec defines how long snapshots should be kept.
 type SnapshotRetentionSpec struct {
 	// The length of time (time.Duration) after which a given Snapshot will be
@@ -60,6 +90,10 @@ type SnapshotTemplateSpec struct {
 	//+operator-sdk:csv:customresourcedefinitions:type=spec
 	//+optional
 	Labels map[string]string `json:"labels,omitempty"`
+	// Service check configuration before taking snapshots
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Service check"
+	//+optional
+	Service ServiceSpec `json:"service,omitempty"`
 	// The name of the VolumeSnapshotClass to be used when creating Snapshots.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="VolumeSnapshotClass name",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	//+optional

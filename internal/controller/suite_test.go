@@ -36,7 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlMetrics "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	snapschedulerv1 "github.com/backube/snapscheduler/api/v1"
+	snapschedulerv1 "deeproute.ai/snapscheduler/api/v1"
 	//+kubebuilder:scaffold:imports
 )
 

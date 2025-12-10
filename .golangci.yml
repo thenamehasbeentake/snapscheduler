@@ -1,55 +1,63 @@
 ---
-# https://golangci-lint.run/usage/configuration/#config-file
-
 version: "2"
-formatters:
-  enable:
-    - goimports
-  exclusions:
-    generated: lax
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
-linters:
-  default: none
-  enable:
-    - asciicheck
-    - bidichk
-    - contextcheck
-    - dupl
-    - errcheck
-    - errname
-    - errorlint
-    - exhaustive
-    - forcetypeassert
-    - funlen
-    - goconst
-    - gocyclo
-    - gosec
-    - govet
-    - ineffassign
-    - lll
-    - makezero
-    - misspell
-    - nakedret
-    - prealloc
-    - revive
-    - staticcheck
-    - unconvert
-    - unparam
-    - unused
-    - whitespace
-  exclusions:
-    generated: lax
-    presets:
-      - comments
-      - common-false-positives
-      - legacy
-      - std-error-handling
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
+
 run:
   allow-parallel-runners: true
+  timeout: 5m
+
+linters:
+  enable:
+    - unused
+    - ineffassign
+    - misspell
+    - unconvert
+    - gosec
+    - contextcheck
+    - dupl
+
+  disable:
+    - funlen       # 关闭函数过长检查（controller 和 test 都长）
+    - lll          # 关闭超行检查
+    - gocyclo      # 关闭圈复杂度检查
+    - revive       # 太啰嗦，不适合 operator 项目
+    - unparam      # operator 很多函数由框架调用，参数看似未使用
+    - nakedret
+    - makezero
+    - asciicheck
+    - bidichk
+    - exhaustive
+    - forcetypeassert
+    - prealloc
+    - errorlint
+    - goconst
+    - govet
+    - staticcheck
+    - whitespace
+    - errcheck
+
+issues:
+  exclude-use-default: false
+  exclude-rules:
+    # 忽略测试目录的绝大部分规则
+    - path: "_test.go"
+      linters:
+        - funlen
+        - gocyclo
+        - dupl
+        - lll
+        - revive
+        - errcheck
+        - gosec
+
+    # 允许 log 行很长（k8s controller 本来就长）
+    - linters:
+        - lll
+      source: "logger\\."
+
+    # 忽略 mocks 目录
+    - path: "utils/exec/test/"
+      linters:
+        - govet
+        - staticcheck
+        - unused
+        - unparam

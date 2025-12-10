@@ -40,8 +40,8 @@ import (
 	ctrlMetrics "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	snapschedulerv1 "github.com/backube/snapscheduler/api/v1"
-	"github.com/backube/snapscheduler/internal/controller"
+	snapschedulerv1 "deeproute.ai/snapscheduler/api/v1"
+	"deeproute.ai/snapscheduler/internal/controller"
 	//+kubebuilder:scaffold:imports
 )
 

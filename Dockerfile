@@ -12,17 +12,22 @@ COPY go.sum go.sum
 RUN go mod download
 
 # Copy the go source
-COPY cmd/main.go cmd/main.go
-COPY api/ api/
-COPY internal/controller/ internal/controller/
+# COPY cmd/main.go cmd/main.go
+# COPY api/ api/
+# COPY internal/controller/ internal/controller/
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
 
 # Build
 ARG version="(unknown)"
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager -ldflags -X=main.snapschedulerVersion=${version} cmd/main.go
 
+
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
+# FROM gcr.io/distroless/static:nonroot
+FROM reg.deeproute.ai/deeproute-public/percona/percona-backup-mongodb:2.9.1
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532
@@ -39,6 +44,6 @@ LABEL io.k8s.displayname="snapscheduler: A snapshot scheduler"
 LABEL name="snapscheduler"
 LABEL summary="${description}"
 LABEL vcs-type="git"
-LABEL vcs-url="https://github.com/backube/snapscheduler"
+LABEL vcs-url="https://deeproute.ai/snapscheduler"
 LABEL vendor="Backube"
 LABEL version="${version}"

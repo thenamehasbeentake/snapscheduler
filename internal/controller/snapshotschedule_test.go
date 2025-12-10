@@ -32,7 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	snapschedulerv1 "github.com/backube/snapscheduler/api/v1"
+	snapschedulerv1 "deeproute.ai/snapscheduler/api/v1"
 )
 
 const (

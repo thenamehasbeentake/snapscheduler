@@ -33,7 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	snapschedulerv1 "github.com/backube/snapscheduler/api/v1"
+	snapschedulerv1 "deeproute.ai/snapscheduler/api/v1"
 )
 
 const (
@@ -442,7 +442,7 @@ var _ = Describe("Deleting snapshots", func() {
 			Expect(k8sClient.Create(context.TODO(), &o)).To(Succeed())
 		}
 
-		Expect(deleteSnapshots(context.TODO(), snapList, logger, k8sClient)).To(Succeed())
+		Expect(deleteSnapshots(context.TODO(), snapList, logger, k8sClient, nil)).To(Succeed())
 
 		snap := &snapv1.VolumeSnapshot{}
 		Eventually(func() bool {
@@ -454,7 +454,7 @@ var _ = Describe("Deleting snapshots", func() {
 			return k8sClient.Get(context.TODO(), client.ObjectKey{Name: "splat", Namespace: ns2.Name}, snap)
 		}, timeout, interval).Should(Succeed())
 
-		Expect(deleteSnapshots(context.TODO(), nil, logger, k8sClient)).To(Succeed())
+		Expect(deleteSnapshots(context.TODO(), nil, logger, k8sClient, nil)).To(Succeed())
 	})
 })
 

@@ -31,12 +31,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	snapschedulerv1 "github.com/backube/snapscheduler/api/v1"
+	snapschedulerv1 "deeproute.ai/snapscheduler/api/v1"
+	"deeproute.ai/snapscheduler/internal/hooks"
+	"deeproute.ai/snapscheduler/utils/exec"
 )
 
 const (
@@ -171,11 +174,35 @@ func handleSnapshotting(ctx context.Context, schedule *snapschedulerv1.SnapshotS
 		logger.Error(err, "unable to get matching PVCs")
 		return ctrl.Result{}, err
 	}
+	logger.Info("Found matching PVCs", "count", len(pvcList.Items), "selector", schedule.Spec.ClaimSelector)
 
+	hook := hooks.GlobalHooksRegistry.GetHook(schedule.Spec.SnapshotTemplate.Service.Type)
+	if hook == nil {
+		return ctrl.Result{}, fmt.Errorf("no hook registered for service type %s", schedule.Spec.SnapshotTemplate.Service.Type)
+	}
+	scCtx := hooks.SnapshotContext{
+		Context:     ctx,
+		Schedule:    schedule,
+		Executor:    &exec.CommandExecutor{},
+		PvcList:     pvcList,
+		Logger:      logger,
+		MatchedPVCs: make(sets.Set[string]),
+	}
+	err = hook.PreSnapshot(&scCtx)
+	if err != nil {
+		logger.Error(err, "PreSnapshot hook failed")
+		return ctrl.Result{
+			RequeueAfter: 30 * time.Minute,
+		}, err
+	}
 	// Iterate through the PVCs and make sure snapshots exist for each. We
 	// stop and re-queue at the first error.
 	snapTime := schedule.Status.NextSnapshotTime.UTC()
 	for _, pvc := range pvcList.Items {
+		if _, matched := scCtx.MatchedPVCs[pvc.Name]; !matched {
+			logger.Info("skipping snapshot for PVC as not matched by PreSnapshot hook", "PVC", pvc.Name)
+			continue
+		}
 		snapName := snapshotName(pvc.Name, schedule.Name, snapTime)
 		logger.V(4).Info("looking for snapshot", "name", snapName)
 		key := types.NamespacedName{Name: snapName, Namespace: pvc.Namespace}
@@ -184,9 +211,16 @@ func handleSnapshotting(ctx context.Context, schedule *snapschedulerv1.SnapshotS
 			if kerrors.IsNotFound(err) {
 				labels := make(map[string]string)
 				var snapshotClassName *string
+
 				if schedule.Spec.SnapshotTemplate != nil {
 					labels = schedule.Spec.SnapshotTemplate.Labels
 					snapshotClassName = schedule.Spec.SnapshotTemplate.SnapshotClassName
+				}
+				for k, v := range scCtx.SnapshotLabels {
+					labels[k] = v
+				}
+				for k, v := range pvc.Labels {
+					labels[k] = v
 				}
 				snap := newSnapForClaim(snapName, pvc, schedule, snapTime, labels, snapshotClassName, enableOwnerReferences)
 				if snap != nil {
@@ -204,7 +238,11 @@ func handleSnapshotting(ctx context.Context, schedule *snapschedulerv1.SnapshotS
 			}
 		}
 	}
-
+	err = hook.PostSnapshot(&scCtx)
+	if err != nil {
+		logger.Error(err, "PostSnapshot hook failed")
+		return ctrl.Result{}, err
+	}
 	// Update lastSnapshot & nextSnapshot times
 	timeNow := metav1.Now()
 	schedule.Status.LastSnapshotTime = &timeNow
