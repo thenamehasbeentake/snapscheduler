@@ -199,3 +199,19 @@ func PbmDeleteBackup(executor pbmexec.Executor, backupName string, opts ...Comma
 	}
 	return nil
 }
+
+// PbmCancelBackup cancels a running backup operation by its name. Backup status becomes "canceled".
+func PbmCancelBackup(executor pbmexec.Executor, backupName string, opts ...CommandOption) error {
+	baseArgs := []string{"cancel-backup"}
+	if backupName == "" {
+		return errors.New("backup name is required")
+	}
+	baseArgs = append(baseArgs, backupName)
+
+	args := buildArgs(baseArgs, opts...)
+	_, err := NewPbmCommand(executor, args).run()
+	if err != nil {
+		return err
+	}
+	return nil
+}

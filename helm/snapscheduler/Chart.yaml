@@ -16,7 +16,7 @@ keywords:
   - storage
 home: https://backube.github.io/snapscheduler/
 sources:
-  - https://github.com/backube/snapscheduler
+  - https://deeproute.ai/snapscheduler
 maintainers:
   - name: John Strunk
     email: jstrunk@redhat.com

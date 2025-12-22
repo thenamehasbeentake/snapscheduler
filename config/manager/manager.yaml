@@ -69,11 +69,12 @@ spec:
         #   type: RuntimeDefault
       containers:
       - command:
-        - /manager
+        - /snapscheduler
         args:
         - --leader-elect
-        image: controller:latest
+        image: reg.deeproute.ai/deeproute-public/backube/snapscheduler:debug-1210
         name: manager
+        imagePullPolicy: Always
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

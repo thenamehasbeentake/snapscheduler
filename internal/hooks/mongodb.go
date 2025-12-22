@@ -50,11 +50,21 @@ func (m *MongodbHook) PreSnapshot(ctx *SnapshotContext) error {
 		klog.Warningf("failed to get pbm status before snapshot: %v", err)
 		return err
 	}
-	if backupInfo.Backups.Snapshot != nil &&
-		(backupInfo.Backups.Snapshot[0].Type == "external" && backupInfo.Backups.Snapshot[0].Status != mongodb.StatusDone) {
-		return fmt.Errorf("%s: %+v", MsgOngoingExternalBackup, backupInfo.Backups.Snapshot[0])
+	if backupInfo.Backups.Snapshot != nil && backupInfo.Backups.Snapshot[0].Type == "external" {
+		lastSnap := backupInfo.Backups.Snapshot[0]
+		if !m.isBackupFinished(lastSnap.Status) {
+			return fmt.Errorf("%s: %+v", MsgOngoingExternalBackup, lastSnap)
+		}
+
+		delta, err := m.backupTillNow(lastSnap.Name)
+		if err != nil {
+			return err
+		}
+		if delta < 5*time.Minute {
+			return fmt.Errorf("too short till last backup %s: %s", lastSnap.Name, delta)
+		}
 	}
-	if backupInfo.Running != nil && backupInfo.Running.Type == "backup" && backupInfo.Running.Status != mongodb.StatusDone {
+	if backupInfo.Running != nil && backupInfo.Running.Type == "backup" && !m.isBackupFinished(backupInfo.Running.Status) {
 		return fmt.Errorf("%s: %+v", MsgOngoingExternalBackup, backupInfo.Running)
 	}
 
@@ -79,10 +89,31 @@ func (m *MongodbHook) PreSnapshot(ctx *SnapshotContext) error {
 
 	// start external backup
 	extBcpOut, err := mongodb.PbmRunExternalBackup(executor, mongodb.WithMongodbURI(ctx.Schedule.Spec.SnapshotTemplate.Service.URI))
-	// TODO: fix `pbm backup` command exit status 1 but backup status copyReady
 	if err != nil {
-		return err
+		externalBackup, err := m.dealwithFailedBackup(ctx)
+		if err != nil {
+			klog.Errorf("failed to run mongodb external backup: %s", err)
+			return err
+		}
+		klog.Infof("Recovered from failed backup, retrying external backup for backup %s", externalBackup)
+
+		describe, err := mongodb.PbmDescribeBackup(executor, externalBackup, mongodb.WithMongodbURI(ctx.Schedule.Spec.SnapshotTemplate.Service.URI))
+		if err != nil {
+			klog.Errorf("failed to describe backup %s: %s", externalBackup, err)
+			return err
+		}
+		// reconstruct extBcpOut from describe output
+		extBcpOut = &mongodb.ExternBcpOut{
+			Name:  describe.Name,
+			Nodes: []mongodb.ExternBcpNode{},
+		}
+		for _, rs := range describe.Replsets {
+			extBcpOut.Nodes = append(extBcpOut.Nodes, mongodb.ExternBcpNode{
+				Name: rs.Node,
+			})
+		}
 	}
+
 	klog.Infof("successful mongodb external backup: %+v", extBcpOut)
 	if len(extBcpOut.Nodes) == 0 {
 		return errors.New("no backup nodes found in external backup output")
@@ -128,6 +159,79 @@ func (m *MongodbHook) PreSnapshot(ctx *SnapshotContext) error {
 	}
 	klog.Infof("mongodb pre-snapshot hook completed successfully: matched pvc %v", ctx.MatchedPVCs)
 	return nil
+}
+
+func (m *MongodbHook) dealwithFailedBackup(ctx *SnapshotContext) (string, error) {
+	var (
+		uncompleteBackups = make([]string, 0)
+		executor          = ctx.Executor
+		err               error
+	)
+	newBackupInfo, err := mongodb.PbmRunStatus(executor, mongodb.WithMongodbURI(ctx.Schedule.Spec.SnapshotTemplate.Service.URI))
+	if err != nil {
+		klog.Errorf("failed to get pbm status: %s", err)
+		return "", err
+	}
+	for _, bcp := range newBackupInfo.Backups.Snapshot {
+		if bcp.Type == "external" && !m.isBackupFinished(bcp.Status) {
+			uncompleteBackups = append(uncompleteBackups, bcp.Name)
+		}
+	}
+	if len(uncompleteBackups) != 1 {
+		return "", fmt.Errorf("expected one uncompleted backup, found %d: %v", len(uncompleteBackups), uncompleteBackups)
+	}
+
+	uncompleteBackup := uncompleteBackups[0]
+
+	if uncompleteBackup != "" {
+		var delta time.Duration
+		delta, err = m.backupTillNow(uncompleteBackup)
+		if err != nil {
+			return uncompleteBackup, err
+		}
+		if delta > 10*time.Minute {
+			klog.Errorf("uncompleted backup %s is too old (%s), not retrying", uncompleteBackup, delta)
+			return uncompleteBackup, fmt.Errorf("uncompleted backup %s is too old (%s), not retrying", uncompleteBackup, delta)
+		}
+
+		// Try to wait for it to reach copyReady status
+		// Failed with reason `get backup metadata` but backup is actually running or completed
+		err = m.waitBackupStatus(executor, uncompleteBackup, ctx.Schedule.Spec.SnapshotTemplate.Service.URI, mongodb.StatusCopyReady)
+
+		if err != nil {
+			// Failed again, cancel the backup
+			err = mongodb.PbmCancelBackup(executor, uncompleteBackup, mongodb.WithMongodbURI(ctx.Schedule.Spec.SnapshotTemplate.Service.URI))
+			if err != nil {
+				klog.Errorf("failed to cancel uncompleted backup %s: %s", uncompleteBackup, err)
+				return uncompleteBackup, err
+			}
+			err = m.waitBackupStatus(executor, uncompleteBackup, ctx.Schedule.Spec.SnapshotTemplate.Service.URI, mongodb.StatusCancelled)
+			if err != nil {
+				klog.Errorf("failed to wait for cancel uncompleted backup status %s: %s", uncompleteBackup, err)
+				return uncompleteBackup, err
+			}
+			err = mongodb.PbmDeleteBackup(executor, uncompleteBackup, mongodb.WithMongodbURI(ctx.Schedule.Spec.SnapshotTemplate.Service.URI))
+			if err != nil {
+				klog.Errorf("failed to delete uncompleted backup %s: %s", uncompleteBackup, err)
+				return uncompleteBackup, err
+			}
+			return "", fmt.Errorf("uncompleted backup %s cancelled and deleted", uncompleteBackup)
+		}
+	}
+	return uncompleteBackup, nil
+}
+
+func (m *MongodbHook) isBackupFinished(status string) bool {
+	return !(status == mongodb.StatusCopyReady || status == mongodb.StatusStarting || status == mongodb.StatusRunning || status == mongodb.StatusCopyDone)
+}
+
+func (m *MongodbHook) backupTillNow(backupname string) (time.Duration, error) {
+	latestTimestamp, err := time.Parse(time.RFC3339, backupname)
+	if err != nil {
+		klog.Errorf("failed to parse backup name %s as timestamp: %s", backupname, err)
+		return 0, err
+	}
+	return time.Since(latestTimestamp), nil
 }
 
 func (m *MongodbHook) PostSnapshot(ctx *SnapshotContext) error {
@@ -180,7 +284,7 @@ func (m *MongodbHook) waitBackupStatus(executor exec.Executor, backupName, uri s
 		if desOut.Status == status {
 			return nil
 		}
-		if desOut.Status == mongodb.StatusCancelled || desOut.Status == mongodb.StatusError {
+		if m.isBackupFinished(desOut.Status) {
 			err = fmt.Errorf("mongodb backup %s ended with status %s", backupName, desOut.Status)
 			return nil
 		}

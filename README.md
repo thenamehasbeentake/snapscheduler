@@ -1,9 +1,21 @@
+# SnapScheduler for db
+部署方式与原文档相同，crds 参考 config/samples/snapscheduler_mongodb.yaml
+
+新增 snapshotTemplate.service 字段，原项目会根据 SnapshotSchedule 所在 ns ， 扫描所有匹配的 pvc。
+新功能会根据 snapshotTemplate.service 相关字段，扫描匹配服务的 pvc，并在打快照前后执行与服务相关的逻辑。
+- claimSelector: 填写 matchLabels 用于匹配服务
+- snapshotTemplate
+  - service
+    - type: 支持的服务类型
+    - uri: 连接服务的 uri
+    - instance: 具体服务实例
+
 # SnapScheduler
 
 [![Build
-Status](https://github.com/backube/snapscheduler/workflows/Tests/badge.svg)](https://github.com/backube/snapscheduler/actions?query=branch%3Amaster+workflow%3ATests+)
+Status](https://deeproute.ai/snapscheduler/workflows/Tests/badge.svg)](https://deeproute.ai/snapscheduler/actions?query=branch%3Amaster+workflow%3ATests+)
 [![Go Report
-Card](https://goreportcard.com/badge/github.com/backube/snapscheduler)](https://goreportcard.com/report/github.com/backube/snapscheduler)
+Card](https://goreportcard.com/badge/deeproute.ai/snapscheduler)](https://goreportcard.com/report/deeproute.ai/snapscheduler)
 [![codecov](https://codecov.io/gh/backube/snapscheduler/branch/master/graph/badge.svg)](https://codecov.io/gh/backube/snapscheduler)
 
 SnapScheduler provides scheduled snapshots for Kubernetes CSI-based volumes.
@@ -39,6 +51,20 @@ spec:
   retention:
     maxCount: 6
   schedule: "0 * * * *"
+  claimSelector: 
+    matchLabels:
+      app.kubernetes.io/instance: dev-rs-mdb
+      app.kubernetes.io/name: percona-server-mongodb
+  
+  disabled: false
+  snapshotTemplate:
+    service:
+      type: percona-server-mongodb
+      uri: "mongodb://backup:vccexxcdDZ7SMMuKr@10.3.11.253:27017"
+      instance: "dev-rs-mdb"
+    snapshotClassName: "csi-rbdplugin-snapclass"
+    labels:
+      createdBy: snapscheduler
 EOF
 
 snapshotschedule.snapscheduler.backube/hourly created

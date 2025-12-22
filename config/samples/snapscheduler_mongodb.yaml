@@ -1,0 +1,31 @@
+---
+apiVersion: snapscheduler.backube/v1
+kind: SnapshotSchedule
+metadata:
+  labels:
+    app.kubernetes.io/name: snapshotschedule
+    app.kubernetes.io/instance: daily
+    app.kubernetes.io/part-of: snapscheduler
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: snapscheduler
+  name: daily
+spec:
+  retention:
+    maxCount: 3
+  # schedule fields: min hr dom mo dow
+  # also supports @shortcuts
+  schedule: "15 14 * * *"
+  claimSelector: 
+    matchLabels:
+      app.kubernetes.io/instance: dev-rs-mdb
+      app.kubernetes.io/name: percona-server-mongodb
+  
+  disabled: false
+  snapshotTemplate:
+    service:
+      type: percona-server-mongodb
+      uri: "mongodb://backup:vccexxcdDZ7SMMuKr@10.3.11.253:27017"
+      instance: "dev-rs-mdb"
+    snapshotClassName: "csi-rbdplugin-snapclass"
+    labels:
+      createdBy: snapscheduler

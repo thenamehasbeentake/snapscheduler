@@ -4,7 +4,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.18.0
+    controller-gen.kubebuilder.io/version: v0.19.0
   name: snapshotschedules.snapscheduler.backube
 spec:
   group: snapscheduler.backube
@@ -137,6 +137,29 @@ spec:
                     description: |-
                       A list of labels that should be added to each Snapshot created by this
                       schedule.
+                    type: object
+                  service:
+                    description: Service check configuration before taking snapshots
+                    properties:
+                      instance:
+                        description: 'The instance name of service to check. Example:
+                          "dev-rs-mdb"'
+                        type: string
+                      timeout:
+                        description: Timeout for the service check (e.g., "5s", "10s").
+                          Reserved fields for future use.
+                        pattern: ^\d+(s|m)$
+                        type: string
+                      type:
+                        description: The type of service to check (percona-server-mongodb)
+                        enum:
+                        - percona-server-mongodb
+                        type: string
+                      uri:
+                        description: 'The service endpoint URI or address to check.
+                          Example: "mongodb://user:pass@host:port",  ${PBM_MONGODB_URI}
+                          in backup-agent container'
+                        type: string
                     type: object
                   snapshotClassName:
                     description: The name of the VolumeSnapshotClass to be used when

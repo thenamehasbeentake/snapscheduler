@@ -61,7 +61,7 @@ spec:
           - --enable-owner-references
           {{- end }}
           command:
-          - /manager
+          - /snapscheduler
           image: {{ include "snapscheduler.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           livenessProbe:

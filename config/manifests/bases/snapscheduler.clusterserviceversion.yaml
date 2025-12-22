@@ -23,8 +23,8 @@ metadata:
     certified: "false"
     description: The SnapScheduler operator takes snapshots of Kubernetes CSI-based
       persistent volumes according to user-supplied schedules.
-    repository: https://github.com/backube/snapscheduler
-    support: https://github.com/backube/snapscheduler
+    repository: https://deeproute.ai/snapscheduler
+    support: https://deeproute.ai/snapscheduler
   name: snapscheduler.v0.0.0
   namespace: placeholder
 spec:
@@ -196,7 +196,7 @@ spec:
   - name: Documentation
     url: https://backube.github.io/snapscheduler/
   - name: Source
-    url: https://github.com/backube/snapscheduler
+    url: https://deeproute.ai/snapscheduler
   - name: Blog
     url: https://backube.github.io/
   maintainers:

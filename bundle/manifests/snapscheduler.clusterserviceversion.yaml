@@ -34,8 +34,8 @@ metadata:
       persistent volumes according to user-supplied schedules.
     operators.operatorframework.io/builder: operator-sdk-v1.34.1
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
-    repository: https://github.com/backube/snapscheduler
-    support: https://github.com/backube/snapscheduler
+    repository: https://deeproute.ai/snapscheduler
+    support: https://deeproute.ai/snapscheduler
   name: snapscheduler.v3.5.0
   namespace: placeholder
 spec:
@@ -323,7 +323,7 @@ spec:
                 - --metrics-bind-address=127.0.0.1:8080
                 - --leader-elect
                 command:
-                - /manager
+                - /snapscheduler
                 image: quay.io/backube/snapscheduler:3.5.0
                 livenessProbe:
                   httpGet:
@@ -407,7 +407,7 @@ spec:
   - name: Documentation
     url: https://backube.github.io/snapscheduler/
   - name: Source
-    url: https://github.com/backube/snapscheduler
+    url: https://deeproute.ai/snapscheduler
   - name: Blog
     url: https://backube.github.io/
   maintainers:

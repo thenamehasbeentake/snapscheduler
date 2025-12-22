@@ -13,6 +13,9 @@ const (
 	StatusDone      string = "done"
 	StatusCancelled string = "canceled"
 	StatusCopyReady string = "copyReady"
+	StatusStarting  string = "starting"
+	StatusRunning   string = "running"
+	StatusCopyDone  string = "copyDone"
 	StatusError     string = "error"
 )
 
